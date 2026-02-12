@@ -7,7 +7,7 @@ api_id = int(os.environ.get("API_ID"))
 api_hash = os.environ.get("API_HASH")
 bot_token = os.environ.get("BOT_TOKEN")
 
-# 👉 PUT YOUR TWO CHANNEL USERNAMES
+# 👉 Your real channels here
 CHANNELS = ["@JustvoicemagicXdeals", "@earningverseeebackup"]
 
 app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
@@ -27,9 +27,10 @@ async def check_join(client, user_id):
 def join_buttons():
     btn = []
 
-    for ch in CHANNELS:
+    # automatic numbering
+    for i, ch in enumerate(CHANNELS, start=1):
         btn.append(
-            [InlineKeyboardButton(f"📢 Join {ch}", url=f"https://t.me/{ch.replace('@','')}")]
+            [InlineKeyboardButton(f"📢 Join Channel {i}", url=f"https://t.me/{ch.replace('@','')}")]
         )
 
     btn.append([InlineKeyboardButton("🔄 Try Again", callback_data="retry")])
