@@ -7,8 +7,8 @@ api_id = int(os.environ.get("API_ID"))
 api_hash = os.environ.get("API_HASH")
 bot_token = os.environ.get("BOT_TOKEN")
 
-# 👉 Put your channel usernames
-CHANNELS = ["@JustvoicemagicXdeals","@earningverseeebackup"]
+# 👉 PUT YOUR TWO CHANNEL USERNAMES
+CHANNELS = ["@JustvoicemagicXdeals", "@earningverseeebackup"]
 
 app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
@@ -24,6 +24,19 @@ async def check_join(client, user_id):
     return True
 
 
+def join_buttons():
+    btn = []
+
+    for ch in CHANNELS:
+        btn.append(
+            [InlineKeyboardButton(f"📢 Join {ch}", url=f"https://t.me/{ch.replace('@','')}")]
+        )
+
+    btn.append([InlineKeyboardButton("🔄 Try Again", callback_data="retry")])
+
+    return InlineKeyboardMarkup(btn)
+
+
 @app.on_message(filters.command("start"))
 async def start(client, message):
     user_id = message.from_user.id
@@ -31,21 +44,9 @@ async def start(client, message):
     joined = await check_join(client, user_id)
 
     if not joined:
-        buttons = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "📢 Join Channel",
-                        url=f"https://t.me/{CHANNELS[0].replace('@','')}"
-                    )
-                ],
-                [InlineKeyboardButton("🔄 Try Again", callback_data="retry")]
-            ]
-        )
-
         await message.reply(
-            "🚨 You must join our channel to use this bot.",
-            reply_markup=buttons
+            "🚨 You must join all channels to use this bot.",
+            reply_markup=join_buttons()
         )
         return
 
@@ -62,7 +63,7 @@ async def retry(client, callback_query):
     joined = await check_join(client, user_id)
 
     if not joined:
-        await callback_query.answer("❌ You still haven't joined!", show_alert=True)
+        await callback_query.answer("❌ Join all channels first!", show_alert=True)
         return
 
     await callback_query.message.edit("✅ Access granted!")
