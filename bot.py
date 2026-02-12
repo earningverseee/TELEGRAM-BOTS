@@ -15,7 +15,6 @@ async def start(client, message):
     user_id = message.from_user.id
 
     for ch in CHANNELS:
-    try:
         member = await client.get_chat_member(ch, user_id)
         if member.status in ["left", "kicked"]:
             await message.reply(f"Join {ch} and press /start again.")
