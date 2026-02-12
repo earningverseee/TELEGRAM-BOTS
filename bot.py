@@ -2,15 +2,24 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import asyncio
 import os
+import uuid
 
 api_id = int(os.environ.get("API_ID"))
 api_hash = os.environ.get("API_HASH")
 bot_token = os.environ.get("BOT_TOKEN")
 
-# 👉 Your real channels here
+BOT_USERNAME = os.environ.get("BOT_USERNAME")  # add in railway later
+
+# 👉 channels for force join
 CHANNELS = ["@JustvoicemagicXdeals", "@earningverseeebackup"]
 
+# 👉 YOUR TELEGRAM USER ID (admin)
+ADMIN = 5739017016  # change later
+
 app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
+
+# temporary storage
+FILES = {}
 
 
 async def check_join(client, user_id):
@@ -26,51 +35,64 @@ async def check_join(client, user_id):
 
 def join_buttons():
     btn = []
-
-    # automatic numbering
     for i, ch in enumerate(CHANNELS, start=1):
-        btn.append(
-            [InlineKeyboardButton(f"📢 Join Channel {i}", url=f"https://t.me/{ch.replace('@','')}")]
-        )
-
+        btn.append([InlineKeyboardButton(f"📢 Join Channel {i}", url=f"https://t.me/{ch.replace('@','')}")])
     btn.append([InlineKeyboardButton("🔄 Try Again", callback_data="retry")])
-
     return InlineKeyboardMarkup(btn)
 
 
+# /start handler
 @app.on_message(filters.command("start"))
 async def start(client, message):
     user_id = message.from_user.id
 
-    joined = await check_join(client, user_id)
+    # deep link parameter
+    if len(message.command) > 1:
+        key = message.command[1]
 
-    if not joined:
-        await message.reply(
-            "🚨 You must join all channels to use this bot.",
-            reply_markup=join_buttons()
-        )
+        joined = await check_join(client, user_id)
+        if not joined:
+            await message.reply(
+                "🚨 You must join all channels to use this bot.",
+                reply_markup=join_buttons()
+            )
+            return
+
+        if key in FILES:
+            sent = await message.reply_video(FILES[key])
+            await asyncio.sleep(1200)
+            await sent.delete()
+        else:
+            await message.reply("❌ File not found.")
         return
 
-    sent = await message.reply_text("✅ Access granted!")
-
-    await asyncio.sleep(1200)
-    await sent.delete()
+    await message.reply("Hello 👋")
 
 
+# retry button
 @app.on_callback_query(filters.regex("retry"))
 async def retry(client, callback_query):
     user_id = callback_query.from_user.id
-
     joined = await check_join(client, user_id)
 
     if not joined:
         await callback_query.answer("❌ Join all channels first!", show_alert=True)
         return
 
-    await callback_query.message.edit("✅ Access granted!")
+    await callback_query.message.edit("✅ Now send the link again.")
 
-    await asyncio.sleep(1200)
-    await callback_query.message.delete()
+
+# ADMIN upload system
+@app.on_message(filters.video & filters.user(ADMIN))
+async def save_file(client, message):
+    file_id = message.video.file_id
+
+    key = str(uuid.uuid4())[:8]
+    FILES[key] = file_id
+
+    link = f"https://t.me/{BOT_USERNAME}?start={key}"
+
+    await message.reply(f"✅ File saved!\n🔗 Link:\n{link}")
 
 
 app.run()
