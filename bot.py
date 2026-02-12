@@ -8,17 +8,16 @@ api_id = int(os.environ.get("API_ID"))
 api_hash = os.environ.get("API_HASH")
 bot_token = os.environ.get("BOT_TOKEN")
 
-BOT_USERNAME = os.environ.get("BOT_USERNAME")  # add in railway later
+BOT_USERNAME = os.environ.get("BOT_USERNAME")
 
-# 👉 channels for force join
+# 👉 your channels
 CHANNELS = ["@JustvoicemagicXdeals", "@earningverseeebackup"]
 
-# 👉 YOUR TELEGRAM USER ID (admin)
-ADMIN = 5739017016  # change later
+# 👉 your telegram id
+ADMIN = 5739017016  # replace with yours
 
 app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
-# temporary storage
 FILES = {}
 
 
@@ -36,28 +35,32 @@ async def check_join(client, user_id):
 def join_buttons():
     btn = []
     for i, ch in enumerate(CHANNELS, start=1):
-        btn.append([InlineKeyboardButton(f"📢 Join Channel {i}", url=f"https://t.me/{ch.replace('@','')}")])
+        btn.append(
+            [InlineKeyboardButton(f"📢 Join Channel {i}", url=f"https://t.me/{ch.replace('@','')}")]
+        )
     btn.append([InlineKeyboardButton("🔄 Try Again", callback_data="retry")])
     return InlineKeyboardMarkup(btn)
 
 
-# /start handler
+# ALWAYS CHECK ON START
 @app.on_message(filters.command("start"))
 async def start(client, message):
     user_id = message.from_user.id
 
-    # deep link parameter
-    if len(message.command) > 1:
-        key = message.command[1]
+    # deep link parameter if exists
+    key = message.command[1] if len(message.command) > 1 else None
 
-        joined = await check_join(client, user_id)
-        if not joined:
-            await message.reply(
-                "🚨 You must join all channels to use this bot.",
-                reply_markup=join_buttons()
-            )
-            return
+    joined = await check_join(client, user_id)
 
+    if not joined:
+        await message.reply(
+            "🚨 You must join all channels to use this bot.",
+            reply_markup=join_buttons()
+        )
+        return
+
+    # if came from link → send file
+    if key:
         if key in FILES:
             sent = await message.reply_video(FILES[key])
             await asyncio.sleep(1200)
@@ -66,23 +69,28 @@ async def start(client, message):
             await message.reply("❌ File not found.")
         return
 
-    await message.reply("Hello 👋")
+    # normal start after join
+    await message.reply("✅ You are verified! Send me a link.")
 
 
-# retry button
 @app.on_callback_query(filters.regex("retry"))
 async def retry(client, callback_query):
     user_id = callback_query.from_user.id
+    key = None
+
+    if callback_query.message.text:
+        pass
+
     joined = await check_join(client, user_id)
 
     if not joined:
         await callback_query.answer("❌ Join all channels first!", show_alert=True)
         return
 
-    await callback_query.message.edit("✅ Now send the link again.")
+    await callback_query.message.edit("✅ You are verified now!")
 
 
-# ADMIN upload system
+# ADMIN upload
 @app.on_message(filters.video & filters.user(ADMIN))
 async def save_file(client, message):
     file_id = message.video.file_id
