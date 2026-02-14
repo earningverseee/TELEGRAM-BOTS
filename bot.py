@@ -3,7 +3,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import asyncio
 import os
 import uuid
-import sqlite3
+from pymongo import MongoClient
 
 api_id = int(os.environ.get("API_ID"))
 api_hash = os.environ.get("API_HASH")
@@ -13,22 +13,14 @@ BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN = int(os.environ.get("ADMIN"))
 DELETE_TIME = int(os.environ.get("DELETE_TIME", 1200))
 
-# channels from railway
 CHANNELS = os.environ.get("CHANNELS").split(",")
 
+# MongoDB
+mongo = MongoClient(os.environ.get("MONGO_URL"))
+db = mongo["telegram_bot"]
+files = db["files"]
+
 app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
-
-# DATABASE
-conn = sqlite3.connect("data.db")
-cur = conn.cursor()
-
-cur.execute("""
-CREATE TABLE IF NOT EXISTS files (
-    key TEXT PRIMARY KEY,
-    file_id TEXT
-)
-""")
-conn.commit()
 
 
 async def check_join(client, user_id):
@@ -69,11 +61,10 @@ async def start(client, message):
         return
 
     if key:
-        cur.execute("SELECT file_id FROM files WHERE key=?", (key,))
-        data = cur.fetchone()
+        data = files.find_one({"key": key})
 
         if data:
-            sent = await message.reply_video(data[0])
+            sent = await message.reply_video(data["file_id"])
             await asyncio.sleep(DELETE_TIME)
             await sent.delete()
         else:
@@ -103,8 +94,10 @@ async def save_file(client, message):
 
     key = str(uuid.uuid4())[:8]
 
-    cur.execute("INSERT INTO files (key, file_id) VALUES (?, ?)", (key, file_id))
-    conn.commit()
+    files.insert_one({
+        "key": key,
+        "file_id": file_id
+    })
 
     link = f"https://t.me/{BOT_USERNAME}?start={key}"
 
