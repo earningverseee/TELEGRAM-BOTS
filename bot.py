@@ -22,7 +22,7 @@ files = db["files"]
 
 app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
-# ===== Force Join Check =====
+# ===== Force Join =====
 async def check_join(client, user_id):
     for ch in CHANNELS:
         ch = ch.strip()
@@ -53,7 +53,6 @@ async def start(client, message):
         user_id = message.from_user.id
         key = message.command[1] if len(message.command) > 1 else None
 
-        # Force join
         joined = await check_join(client, user_id)
         if not joined:
             await message.reply(
@@ -62,19 +61,16 @@ async def start(client, message):
             )
             return
 
-        # If no deep link
         if not key:
             await message.reply("✅ You are verified!")
             return
 
-        # Fetch from MongoDB
         data = files.find_one({"key": key})
 
         if not data:
             await message.reply("❌ File not found.")
             return
 
-        # Backward compatible
         if "files" in data:
             file_list = data["files"]
         elif "file_id" in data:
@@ -85,13 +81,13 @@ async def start(client, message):
 
         sent_messages = []
         for fid in file_list:
-            msg = await message.reply_cached_media(
-                fid,
+            msg = await client.send_cached_media(
+                chat_id=message.chat.id,
+                file_id=fid,
                 protect_content=True
             )
             sent_messages.append(msg)
 
-        # Auto delete
         if DELETE_TIME > 0:
             await asyncio.sleep(DELETE_TIME)
             for m in sent_messages:
@@ -103,7 +99,7 @@ async def start(client, message):
     except Exception as e:
         await message.reply(f"⚠ Error: {str(e)}")
 
-# ===== Retry Button =====
+# ===== RETRY BUTTON =====
 @app.on_callback_query(filters.regex("retry"))
 async def retry(client, callback_query):
     joined = await check_join(client, callback_query.from_user.id)
@@ -112,7 +108,7 @@ async def retry(client, callback_query):
     else:
         await callback_query.message.edit("✅ You are verified now!")
 
-# ===== Admin Upload (Single File Only For Stability) =====
+# ===== ADMIN UPLOAD =====
 @app.on_message((filters.video | filters.photo) & filters.user(ADMIN))
 async def upload_file(client, message):
     try:
