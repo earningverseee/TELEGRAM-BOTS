@@ -86,14 +86,17 @@ async def start(client, message):
             for file_id in file_list:
                 sent = await message.reply_cached_media(
                     file_id,
-                    protect_content=True  # Anti-forward
+                    protect_content=True
                 )
                 sent_messages.append(sent)
 
             if DELETE_TIME > 0:
                 await asyncio.sleep(DELETE_TIME)
                 for msg in sent_messages:
-                    await msg.delete()
+                    try:
+                        await msg.delete()
+                    except:
+                        pass
         else:
             await message.reply("❌ File not found.")
         return
@@ -135,12 +138,17 @@ async def save_single_file(client, message):
     await message.reply(f"✅ File saved!\n🔗 Link:\n{link}")
 
 
-# ===== Admin Upload Bundle (Album) =====
-@app.on_message(filters.media_group & filters.user(ADMIN))
-async def save_bundle(client, messages):
+# ===== Admin Upload Bundle (SAFE Pyrogram v2) =====
+@app.on_message(filters.media_group & filters.user(ADMIN), group=1)
+async def save_bundle(client, message):
+    try:
+        media_group = await client.get_media_group(message.chat.id, message.id)
+    except:
+        return
+
     file_ids = []
 
-    for msg in messages:
+    for msg in media_group:
         if msg.video:
             file_ids.append(msg.video.file_id)
         elif msg.photo:
@@ -157,10 +165,11 @@ async def save_bundle(client, messages):
     })
 
     link = f"https://t.me/{BOT_USERNAME}?start={key}"
-    await messages[0].reply(f"✅ Bundle saved!\n🔗 Link:\n{link}")
+
+    await message.reply(f"✅ Bundle saved!\n🔗 Link:\n{link}")
 
 
-# ===== ADMIN DASHBOARD =====
+# ===== Admin Dashboard =====
 
 @app.on_message(filters.command("stats") & filters.user(ADMIN))
 async def stats(client, message):
