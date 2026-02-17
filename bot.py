@@ -23,13 +23,13 @@ users_collection = db["users"]
 
 app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
-# ===== SAVE USER =====
+# ===== Save User =====
 async def save_user(user_id):
     if not users_collection.find_one({"user_id": user_id}):
         users_collection.insert_one({"user_id": user_id})
 
 
-# ===== FORCE JOIN =====
+# ===== Force Join =====
 async def check_join(client, user_id):
     for ch in CHANNELS:
         ch = ch.strip()
@@ -71,9 +71,19 @@ async def start(client, message):
 
     if key:
         data = files_collection.find_one({"key": key})
+
         if data:
+            # Backward compatibility
+            if "files" in data:
+                file_list = data["files"]
+            elif "file_id" in data:
+                file_list = [data["file_id"]]
+            else:
+                await message.reply("❌ File data corrupted.")
+                return
+
             sent_messages = []
-            for file_id in data["files"]:
+            for file_id in file_list:
                 sent = await message.reply_cached_media(
                     file_id,
                     protect_content=True  # Anti-forward
@@ -91,12 +101,12 @@ async def start(client, message):
     await message.reply("✅ You are verified!")
 
 
-# ===== RETRY BUTTON =====
+# ===== Retry Button =====
 @app.on_callback_query(filters.regex("retry"))
 async def retry(client, callback_query):
     user_id = callback_query.from_user.id
-    joined = await check_join(client, user_id)
 
+    joined = await check_join(client, user_id)
     if not joined:
         await callback_query.answer("❌ Join all channels first!", show_alert=True)
         return
@@ -104,7 +114,7 @@ async def retry(client, callback_query):
     await callback_query.message.edit("✅ You are verified now!")
 
 
-# ===== ADMIN UPLOAD SINGLE =====
+# ===== Admin Upload Single =====
 @app.on_message((filters.video | filters.photo) & filters.user(ADMIN))
 async def save_single_file(client, message):
     if message.video:
@@ -125,7 +135,7 @@ async def save_single_file(client, message):
     await message.reply(f"✅ File saved!\n🔗 Link:\n{link}")
 
 
-# ===== ADMIN BUNDLE UPLOAD =====
+# ===== Admin Upload Bundle (Album) =====
 @app.on_message(filters.media_group & filters.user(ADMIN))
 async def save_bundle(client, messages):
     file_ids = []
