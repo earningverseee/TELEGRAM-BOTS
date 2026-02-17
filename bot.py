@@ -18,18 +18,11 @@ CHANNELS = os.environ.get("CHANNELS").split(",")
 # ===== MongoDB Setup =====
 mongo = MongoClient(os.environ.get("MONGO_URL"))
 db = mongo["telegram_bot"]
-files_collection = db["files"]
-users_collection = db["users"]
+files = db["files"]
 
 app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
-# ===== Save User =====
-async def save_user(user_id):
-    if not users_collection.find_one({"user_id": user_id}):
-        users_collection.insert_one({"user_id": user_id})
-
-
-# ===== Force Join =====
+# ===== Force Join Check =====
 async def check_join(client, user_id):
     for ch in CHANNELS:
         ch = ch.strip()
@@ -41,160 +34,105 @@ async def check_join(client, user_id):
             return False
     return True
 
-
 def join_buttons():
-    btn = []
+    buttons = []
     for i, ch in enumerate(CHANNELS, start=1):
-        ch = ch.strip()
-        btn.append(
-            [InlineKeyboardButton(f"📢 Join Channel {i}", url=f"https://t.me/{ch.replace('@','')}")]
-        )
-    btn.append([InlineKeyboardButton("🔄 Try Again", callback_data="retry")])
-    return InlineKeyboardMarkup(btn)
-
+        buttons.append([
+            InlineKeyboardButton(
+                f"📢 Join Channel {i}",
+                url=f"https://t.me/{ch.strip().replace('@','')}"
+            )
+        ])
+    buttons.append([InlineKeyboardButton("🔄 Try Again", callback_data="retry")])
+    return InlineKeyboardMarkup(buttons)
 
 # ===== START COMMAND =====
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    user_id = message.from_user.id
-    await save_user(user_id)
+    try:
+        user_id = message.from_user.id
+        key = message.command[1] if len(message.command) > 1 else None
 
-    key = message.command[1] if len(message.command) > 1 else None
+        # Force join
+        joined = await check_join(client, user_id)
+        if not joined:
+            await message.reply(
+                "🚨 You must join all channels to use this bot.",
+                reply_markup=join_buttons()
+            )
+            return
 
-    joined = await check_join(client, user_id)
-    if not joined:
-        await message.reply(
-            "🚨 You must join all channels to use this bot.",
-            reply_markup=join_buttons()
-        )
-        return
+        # If no deep link
+        if not key:
+            await message.reply("✅ You are verified!")
+            return
 
-    if key:
-        data = files_collection.find_one({"key": key})
+        # Fetch from MongoDB
+        data = files.find_one({"key": key})
 
-        if data:
-            # Backward compatibility
-            if "files" in data:
-                file_list = data["files"]
-            elif "file_id" in data:
-                file_list = [data["file_id"]]
-            else:
-                await message.reply("❌ File data corrupted.")
-                return
-
-            sent_messages = []
-            for file_id in file_list:
-                sent = await message.reply_cached_media(
-                    file_id,
-                    protect_content=True
-                )
-                sent_messages.append(sent)
-
-            if DELETE_TIME > 0:
-                await asyncio.sleep(DELETE_TIME)
-                for msg in sent_messages:
-                    try:
-                        await msg.delete()
-                    except:
-                        pass
-        else:
+        if not data:
             await message.reply("❌ File not found.")
-        return
+            return
 
-    await message.reply("✅ You are verified!")
+        # Backward compatible
+        if "files" in data:
+            file_list = data["files"]
+        elif "file_id" in data:
+            file_list = [data["file_id"]]
+        else:
+            await message.reply("❌ File data corrupted.")
+            return
 
+        sent_messages = []
+        for fid in file_list:
+            msg = await message.reply_cached_media(
+                fid,
+                protect_content=True
+            )
+            sent_messages.append(msg)
+
+        # Auto delete
+        if DELETE_TIME > 0:
+            await asyncio.sleep(DELETE_TIME)
+            for m in sent_messages:
+                try:
+                    await m.delete()
+                except:
+                    pass
+
+    except Exception as e:
+        await message.reply(f"⚠ Error: {str(e)}")
 
 # ===== Retry Button =====
 @app.on_callback_query(filters.regex("retry"))
 async def retry(client, callback_query):
-    user_id = callback_query.from_user.id
-
-    joined = await check_join(client, user_id)
+    joined = await check_join(client, callback_query.from_user.id)
     if not joined:
         await callback_query.answer("❌ Join all channels first!", show_alert=True)
-        return
+    else:
+        await callback_query.message.edit("✅ You are verified now!")
 
-    await callback_query.message.edit("✅ You are verified now!")
-
-
-# ===== Admin Upload Single =====
+# ===== Admin Upload (Single File Only For Stability) =====
 @app.on_message((filters.video | filters.photo) & filters.user(ADMIN))
-async def save_single_file(client, message):
-    if message.video:
-        file_id = message.video.file_id
-    elif message.photo:
-        file_id = message.photo.file_id
-    else:
-        return
-
-    key = str(uuid.uuid4())[:8]
-
-    files_collection.insert_one({
-        "key": key,
-        "files": [file_id]
-    })
-
-    link = f"https://t.me/{BOT_USERNAME}?start={key}"
-    await message.reply(f"✅ File saved!\n🔗 Link:\n{link}")
-
-
-# ===== Admin Upload Bundle (SAFE Pyrogram v2) =====
-@app.on_message(filters.media_group & filters.user(ADMIN), group=1)
-async def save_bundle(client, message):
+async def upload_file(client, message):
     try:
-        media_group = await client.get_media_group(message.chat.id, message.id)
-    except:
-        return
+        if message.video:
+            fid = message.video.file_id
+        else:
+            fid = message.photo.file_id
 
-    file_ids = []
+        key = str(uuid.uuid4())[:8]
 
-    for msg in media_group:
-        if msg.video:
-            file_ids.append(msg.video.file_id)
-        elif msg.photo:
-            file_ids.append(msg.photo.file_id)
+        files.insert_one({
+            "key": key,
+            "files": [fid]
+        })
 
-    if not file_ids:
-        return
+        link = f"https://t.me/{BOT_USERNAME}?start={key}"
 
-    key = str(uuid.uuid4())[:8]
+        await message.reply(f"✅ File saved!\n🔗 Link:\n{link}")
 
-    files_collection.insert_one({
-        "key": key,
-        "files": file_ids
-    })
-
-    link = f"https://t.me/{BOT_USERNAME}?start={key}"
-
-    await message.reply(f"✅ Bundle saved!\n🔗 Link:\n{link}")
-
-
-# ===== Admin Dashboard =====
-
-@app.on_message(filters.command("stats") & filters.user(ADMIN))
-async def stats(client, message):
-    total_files = files_collection.count_documents({})
-    total_users = users_collection.count_documents({})
-    await message.reply(
-        f"📊 Admin Dashboard\n\n"
-        f"Total Files: {total_files}\n"
-        f"Total Users: {total_users}"
-    )
-
-
-@app.on_message(filters.command("delete") & filters.user(ADMIN))
-async def delete_file(client, message):
-    if len(message.command) < 2:
-        await message.reply("Usage: /delete filekey")
-        return
-
-    key = message.command[1]
-    result = files_collection.delete_one({"key": key})
-
-    if result.deleted_count:
-        await message.reply("✅ File deleted successfully.")
-    else:
-        await message.reply("❌ File not found.")
-
+    except Exception as e:
+        await message.reply(f"⚠ Upload Error: {str(e)}")
 
 app.run()
