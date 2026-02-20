@@ -13,26 +13,31 @@ bot_token = os.environ.get("BOT_TOKEN")
 
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN = int(os.environ.get("ADMIN"))
-DELETE_TIME = int(os.environ.get("DELETE_TIME", 1200))
+DELETE_TIME = int(os.environ.get("DELETE_TIME", 900))
 CHANNELS = os.environ.get("CHANNELS").split(",")
 
-# ===== Mongo (Single Client Only) =====
-mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=50)
+# ===== Mongo Optimized =====
+mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=10)
 db = mongo["telegram_bot"]
 files = db["files"]
 users = db["users"]
 
 app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
-# ===== Safe Send Wrapper =====
-async def safe_send(func, *args, **kwargs):
-    try:
-        return await func(*args, **kwargs)
-    except FloodWait as e:
-        await asyncio.sleep(e.value)
-        return await func(*args, **kwargs)
-    except RPCError:
-        return None
+# ===== Verified User Cache =====
+verified_users = set()
+
+# ===== Safe Telegram Call Wrapper =====
+async def safe_call(func, *args, **kwargs):
+    while True:
+        try:
+            return await func(*args, **kwargs)
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+        except RPCError:
+            return None
+        except Exception:
+            return None
 
 # ===== Save User =====
 async def save_user(user_id):
@@ -51,86 +56,116 @@ async def check_join(client, user_id):
     return True
 
 def join_buttons():
-    btn = []
+    buttons = []
     for i, ch in enumerate(CHANNELS, start=1):
-        btn.append([
+        buttons.append([
             InlineKeyboardButton(
                 f"📢 Join Channel {i}",
                 url=f"https://t.me/{ch.strip().replace('@','')}"
             )
         ])
-    btn.append([InlineKeyboardButton("🔄 Try Again", callback_data="retry")])
-    return InlineKeyboardMarkup(btn)
+    buttons.append([InlineKeyboardButton("🔄 Try Again", callback_data="retry")])
+    return InlineKeyboardMarkup(buttons)
 
-# ===== START =====
+# ===== START COMMAND =====
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    try:
-        user_id = message.from_user.id
-        await save_user(user_id)
 
-        key = message.command[1] if len(message.command) > 1 else None
+    if not message.from_user:
+        return
 
-        if not await check_join(client, user_id):
-            await safe_send(
-                message.reply,
-                "🚨 Join channels first.",
-                reply_markup=join_buttons()
-            )
-            return
+    user_id = message.from_user.id
+    await save_user(user_id)
 
-        if not key:
-            await safe_send(message.reply, "✅ Verified.")
-            return
+    key = message.command[1] if len(message.command) > 1 else None
 
-        data = files.find_one({"key": key})
-        if not data:
-            await safe_send(message.reply, "❌ File not found.")
-            return
+    # ===== Verified Cache =====
+    if user_id in verified_users:
+        joined = True
+    else:
+        joined = await check_join(client, user_id)
+        if joined:
+            verified_users.add(user_id)
 
-        file_list = data.get("files") or [data.get("file_id")]
+    if not joined:
+        await safe_call(
+            message.reply,
+            "🚨 Join all channels first.",
+            reply_markup=join_buttons()
+        )
+        return
 
-        sent = []
-        for fid in file_list:
-            msg = await safe_send(
-                client.send_cached_media,
-                message.chat.id,
-                fid,
-                protect_content=True
-            )
-            if msg:
-                sent.append(msg)
+    if not key:
+        await safe_call(message.reply, "✅ Verified.")
+        return
 
-        if DELETE_TIME > 0 and sent:
-            await asyncio.sleep(DELETE_TIME)
-            for m in sent:
-                try:
-                    await m.delete()
-                except:
-                    pass
+    data = files.find_one({"key": key})
+    if not data:
+        await safe_call(message.reply, "❌ File not found.")
+        return
 
-    except Exception:
-        pass  # prevents crash
+    file_list = data.get("files") or [data.get("file_id")]
 
-# ===== RETRY =====
+    sent_msgs = []
+    for fid in file_list:
+        await asyncio.sleep(0.7)  # Burst protection
+        msg = await safe_call(
+            client.send_cached_media,
+            message.chat.id,
+            fid,
+            protect_content=True
+        )
+        if msg:
+            sent_msgs.append(msg)
+
+    if DELETE_TIME > 0 and sent_msgs:
+        await asyncio.sleep(DELETE_TIME)
+        for m in sent_msgs:
+            try:
+                await m.delete()
+            except:
+                pass
+
+# ===== RETRY BUTTON =====
 @app.on_callback_query(filters.regex("retry"))
 async def retry(client, callback_query):
-    if not await check_join(client, callback_query.from_user.id):
-        await safe_send(
-            callback_query.answer,
-            "❌ Join first!",
-            show_alert=True
+
+    if not callback_query.from_user:
+        return
+
+    user_id = callback_query.from_user.id
+
+    if user_id in verified_users:
+        await safe_call(
+            callback_query.message.edit,
+            "✅ Verified. Click the link again."
+        )
+        return
+
+    joined = await check_join(client, user_id)
+
+    if joined:
+        verified_users.add(user_id)
+        await safe_call(
+            callback_query.message.edit,
+            "✅ Verified. Click the link again."
         )
     else:
-        await safe_send(
-            callback_query.message.edit,
-            "✅ Verified."
+        await safe_call(
+            callback_query.answer,
+            "❌ Join all channels first!",
+            show_alert=True
         )
 
 # ===== ADMIN UPLOAD =====
 @app.on_message((filters.video | filters.photo) & filters.user(ADMIN))
 async def upload(client, message):
+
+    if not message.from_user:
+        return
+
     try:
+        # ===== BUNDLE =====
         if message.media_group_id:
             try:
                 group = await client.get_media_group(message.chat.id, message.id)
@@ -140,36 +175,36 @@ async def upload(client, message):
             if message.id != group[0].id:
                 return
 
-            fids = []
+            file_ids = []
             for m in group:
                 if m.video:
-                    fids.append(m.video.file_id)
+                    file_ids.append(m.video.file_id)
                 elif m.photo:
-                    fids.append(m.photo.file_id)
+                    file_ids.append(m.photo.file_id)
 
             key = str(uuid.uuid4())[:8]
-            files.insert_one({"key": key, "files": fids})
+            files.insert_one({"key": key, "files": file_ids})
 
             link = f"https://t.me/{BOT_USERNAME}?start={key}"
-            await safe_send(message.reply, f"✅ Bundle saved.\n🔗 {link}")
+            await safe_call(message.reply, f"✅ Bundle saved.\n🔗 {link}")
             return
 
-        # single
+        # ===== SINGLE =====
         fid = message.video.file_id if message.video else message.photo.file_id
 
         key = str(uuid.uuid4())[:8]
         files.insert_one({"key": key, "files": [fid]})
 
         link = f"https://t.me/{BOT_USERNAME}?start={key}"
-        await safe_send(message.reply, f"✅ Saved.\n🔗 {link}")
+        await safe_call(message.reply, f"✅ Saved.\n🔗 {link}")
 
-    except Exception:
+    except:
         pass
 
 # ===== ADMIN DASHBOARD =====
 @app.on_message(filters.command("stats") & filters.user(ADMIN))
 async def stats(client, message):
-    await safe_send(
+    await safe_call(
         message.reply,
         f"📊 Stats\n\nFiles: {files.count_documents({})}\nUsers: {users.count_documents({})}"
     )
@@ -180,6 +215,6 @@ async def delete_file(client, message):
         return
     key = message.command[1]
     files.delete_one({"key": key})
-    await safe_send(message.reply, "✅ Deleted.")
+    await safe_call(message.reply, "✅ Deleted.")
 
 app.run()
