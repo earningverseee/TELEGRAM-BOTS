@@ -1,4 +1,4 @@
-from pyrogram import Client, filters, idle
+from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.errors import FloodWait, RPCError
 import asyncio
@@ -18,7 +18,7 @@ DELETE_TIME = int(os.environ.get("DELETE_TIME", 900))
 CHANNELS = os.environ.get("CHANNELS", "").split(",")
 
 # ================= DATABASE =================
-mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=40)
+mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=50)
 db = mongo["telegram_bot"]
 files = db["files"]
 users = db["users"]
@@ -27,6 +27,7 @@ deletions = db["deletions"]
 app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
 verified_users = set()
+worker_started = False
 
 # ================= SAFE CALL =================
 async def safe_call(func, *args, **kwargs):
@@ -39,6 +40,26 @@ async def safe_call(func, *args, **kwargs):
             return None
         except Exception:
             return None
+
+# ================= DELETE WORKER =================
+async def delete_worker():
+    while True:
+        try:
+            now = int(time.time())
+            expired = deletions.find({"expire_at": {"$lte": now}})
+
+            for doc in expired:
+                try:
+                    await app.delete_messages(doc["chat_id"], doc["message_id"])
+                except:
+                    pass
+
+                deletions.delete_one({"_id": doc["_id"]})
+
+        except:
+            pass
+
+        await asyncio.sleep(30)
 
 # ================= SAVE USER =================
 async def save_user(user_id):
@@ -78,6 +99,13 @@ def join_buttons():
 @app.on_message(filters.command("start"))
 async def start(client, message):
 
+    global worker_started
+
+    # Start delete worker once
+    if not worker_started:
+        asyncio.create_task(delete_worker())
+        worker_started = True
+
     if not message.from_user:
         return
 
@@ -86,7 +114,7 @@ async def start(client, message):
 
     key = message.command[1] if len(message.command) > 1 else None
 
-    # Verify join
+    # Join verification
     if user_id in verified_users:
         joined = True
     else:
@@ -125,7 +153,7 @@ async def start(client, message):
         if msg:
             sent_msgs.append(msg)
 
-    # Schedule persistent deletion
+    # Persistent delete schedule
     expire_time = int(time.time()) + DELETE_TIME
 
     for m in sent_msgs:
@@ -200,22 +228,6 @@ async def upload(client, message):
     except:
         pass
 
-# ================= DELETE WORKER =================
-async def delete_worker():
-    while True:
-        now = int(time.time())
-        expired = deletions.find({"expire_at": {"$lte": now}})
-
-        for doc in expired:
-            try:
-                await app.delete_messages(doc["chat_id"], doc["message_id"])
-            except:
-                pass
-
-            deletions.delete_one({"_id": doc["_id"]})
-
-        await asyncio.sleep(30)
-
 # ================= ADMIN STATS =================
 @app.on_message(filters.command("stats") & filters.user(ADMIN))
 async def stats(client, message):
@@ -224,12 +236,5 @@ async def stats(client, message):
         f"📊 Stats\n\nFiles: {files.count_documents({})}\nUsers: {users.count_documents({})}"
     )
 
-# ================= MAIN =================
-async def main():
-    await app.start()
-    asyncio.create_task(delete_worker())
-    print("Bot started successfully")
-    await idle()
-    await app.stop()
-
-asyncio.run(main())
+# ================= RUN =================
+app.run()
