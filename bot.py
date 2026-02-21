@@ -4,6 +4,7 @@ from pyrogram.errors import FloodWait, RPCError
 import asyncio
 import os
 import uuid
+import time
 from pymongo import MongoClient
 
 # ===== ENV =====
@@ -16,18 +17,19 @@ ADMIN = int(os.environ.get("ADMIN"))
 DELETE_TIME = int(os.environ.get("DELETE_TIME", 900))
 CHANNELS = os.environ.get("CHANNELS").split(",")
 
-# ===== Mongo Optimized =====
-mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=20)
+# ===== Mongo (Optimized Pool) =====
+mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=10)
 db = mongo["telegram_bot"]
 files = db["files"]
 users = db["users"]
+deletions = db["deletions"]
 
 app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
-# ===== Verified User Cache =====
+# ===== Verified Cache =====
 verified_users = set()
 
-# ===== Safe Telegram Call Wrapper =====
+# ===== Safe Telegram Call =====
 async def safe_call(func, *args, **kwargs):
     while True:
         try:
@@ -67,7 +69,7 @@ def join_buttons():
     buttons.append([InlineKeyboardButton("🔄 Try Again", callback_data="retry")])
     return InlineKeyboardMarkup(buttons)
 
-# ===== START COMMAND =====
+# ===== START =====
 @app.on_message(filters.command("start"))
 async def start(client, message):
 
@@ -79,7 +81,7 @@ async def start(client, message):
 
     key = message.command[1] if len(message.command) > 1 else None
 
-    # ===== Verified Cache =====
+    # ===== Join Cache =====
     if user_id in verified_users:
         joined = True
     else:
@@ -108,7 +110,7 @@ async def start(client, message):
 
     sent_msgs = []
     for fid in file_list:
-        await asyncio.sleep(0.3)  # Burst protection
+        await asyncio.sleep(0.7)
         msg = await safe_call(
             client.send_cached_media,
             message.chat.id,
@@ -118,15 +120,17 @@ async def start(client, message):
         if msg:
             sent_msgs.append(msg)
 
-    if DELETE_TIME > 0 and sent_msgs:
-        await asyncio.sleep(DELETE_TIME)
-        for m in sent_msgs:
-            try:
-                await m.delete()
-            except:
-                pass
+    # ===== Persistent Delete Schedule =====
+    expire_time = int(time.time()) + DELETE_TIME
 
-# ===== RETRY BUTTON =====
+    for m in sent_msgs:
+        deletions.insert_one({
+            "chat_id": message.chat.id,
+            "message_id": m.id,
+            "expire_at": expire_time
+        })
+
+# ===== RETRY =====
 @app.on_callback_query(filters.regex("retry"))
 async def retry(client, callback_query):
 
@@ -138,7 +142,7 @@ async def retry(client, callback_query):
     if user_id in verified_users:
         await safe_call(
             callback_query.message.edit,
-            "✅ Verified. Click the link again."
+            "✅ Verified. Click link again."
         )
         return
 
@@ -148,7 +152,7 @@ async def retry(client, callback_query):
         verified_users.add(user_id)
         await safe_call(
             callback_query.message.edit,
-            "✅ Verified. Click the link again."
+            "✅ Verified. Click link again."
         )
     else:
         await safe_call(
@@ -165,12 +169,8 @@ async def upload(client, message):
         return
 
     try:
-        # ===== BUNDLE =====
         if message.media_group_id:
-            try:
-                group = await client.get_media_group(message.chat.id, message.id)
-            except:
-                return
+            group = await client.get_media_group(message.chat.id, message.id)
 
             if message.id != group[0].id:
                 return
@@ -189,7 +189,6 @@ async def upload(client, message):
             await safe_call(message.reply, f"✅ Bundle saved.\n🔗 {link}")
             return
 
-        # ===== SINGLE =====
         fid = message.video.file_id if message.video else message.photo.file_id
 
         key = str(uuid.uuid4())[:8]
@@ -201,20 +200,35 @@ async def upload(client, message):
     except:
         pass
 
-# ===== ADMIN DASHBOARD =====
+# ===== DELETE WORKER (Survives Restart) =====
+async def delete_worker():
+    while True:
+        now = int(time.time())
+        expired = deletions.find({"expire_at": {"$lte": now}})
+
+        for doc in expired:
+            try:
+                await app.delete_messages(
+                    doc["chat_id"],
+                    doc["message_id"]
+                )
+            except:
+                pass
+
+            deletions.delete_one({"_id": doc["_id"]})
+
+        await asyncio.sleep(30)
+
+@app.on_startup()
+async def startup():
+    asyncio.create_task(delete_worker())
+
+# ===== ADMIN STATS =====
 @app.on_message(filters.command("stats") & filters.user(ADMIN))
 async def stats(client, message):
     await safe_call(
         message.reply,
         f"📊 Stats\n\nFiles: {files.count_documents({})}\nUsers: {users.count_documents({})}"
     )
-
-@app.on_message(filters.command("delete") & filters.user(ADMIN))
-async def delete_file(client, message):
-    if len(message.command) < 2:
-        return
-    key = message.command[1]
-    files.delete_one({"key": key})
-    await safe_call(message.reply, "✅ Deleted.")
 
 app.run()
