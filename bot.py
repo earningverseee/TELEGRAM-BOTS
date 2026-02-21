@@ -1,4 +1,4 @@
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.errors import FloodWait, RPCError
 import asyncio
@@ -17,8 +17,8 @@ ADMIN = int(os.environ.get("ADMIN"))
 DELETE_TIME = int(os.environ.get("DELETE_TIME", 900))
 CHANNELS = os.environ.get("CHANNELS").split(",")
 
-# ===== Mongo (Optimized Pool) =====
-mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=20)
+# ===== Mongo =====
+mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=50)
 db = mongo["telegram_bot"]
 files = db["files"]
 users = db["users"]
@@ -26,7 +26,6 @@ deletions = db["deletions"]
 
 app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
-# ===== Verified Cache =====
 verified_users = set()
 
 # ===== Safe Telegram Call =====
@@ -81,7 +80,7 @@ async def start(client, message):
 
     key = message.command[1] if len(message.command) > 1 else None
 
-    # ===== Join Cache =====
+    # Verified cache
     if user_id in verified_users:
         joined = True
     else:
@@ -110,7 +109,7 @@ async def start(client, message):
 
     sent_msgs = []
     for fid in file_list:
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.4)
         msg = await safe_call(
             client.send_cached_media,
             message.chat.id,
@@ -120,7 +119,7 @@ async def start(client, message):
         if msg:
             sent_msgs.append(msg)
 
-    # ===== Persistent Delete Schedule =====
+    # Schedule persistent deletion
     expire_time = int(time.time()) + DELETE_TIME
 
     for m in sent_msgs:
@@ -200,7 +199,7 @@ async def upload(client, message):
     except:
         pass
 
-# ===== DELETE WORKER (Survives Restart) =====
+# ===== DELETE WORKER =====
 async def delete_worker():
     while True:
         now = int(time.time())
@@ -219,16 +218,12 @@ async def delete_worker():
 
         await asyncio.sleep(30)
 
-@app.on_startup()
-async def startup():
+# ===== MAIN =====
+async def main():
+    await app.start()
     asyncio.create_task(delete_worker())
+    print("Bot started successfully")
+    await idle()
+    await app.stop()
 
-# ===== ADMIN STATS =====
-@app.on_message(filters.command("stats") & filters.user(ADMIN))
-async def stats(client, message):
-    await safe_call(
-        message.reply,
-        f"📊 Stats\n\nFiles: {files.count_documents({})}\nUsers: {users.count_documents({})}"
-    )
-
-app.run()
+asyncio.run(main())
