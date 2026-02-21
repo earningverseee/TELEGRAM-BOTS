@@ -18,7 +18,7 @@ DELETE_TIME = int(os.environ.get("DELETE_TIME", 900))
 CHANNELS = os.environ.get("CHANNELS").split(",")
 
 # ===== Mongo (Optimized Pool) =====
-mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=10)
+mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=20)
 db = mongo["telegram_bot"]
 files = db["files"]
 users = db["users"]
@@ -110,7 +110,7 @@ async def start(client, message):
 
     sent_msgs = []
     for fid in file_list:
-        await asyncio.sleep(0.7)
+        await asyncio.sleep(0.3)
         msg = await safe_call(
             client.send_cached_media,
             message.chat.id,
