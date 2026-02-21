@@ -7,7 +7,7 @@ import uuid
 import time
 from pymongo import MongoClient
 
-# ===== ENV =====
+# ================= ENV =================
 api_id = int(os.environ.get("API_ID"))
 api_hash = os.environ.get("API_HASH")
 bot_token = os.environ.get("BOT_TOKEN")
@@ -15,10 +15,10 @@ bot_token = os.environ.get("BOT_TOKEN")
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN = int(os.environ.get("ADMIN"))
 DELETE_TIME = int(os.environ.get("DELETE_TIME", 900))
-CHANNELS = os.environ.get("CHANNELS").split(",")
+CHANNELS = os.environ.get("CHANNELS", "").split(",")
 
-# ===== Mongo =====
-mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=50)
+# ================= DATABASE =================
+mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=10)
 db = mongo["telegram_bot"]
 files = db["files"]
 users = db["users"]
@@ -28,7 +28,7 @@ app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
 verified_users = set()
 
-# ===== Safe Telegram Call =====
+# ================= SAFE CALL =================
 async def safe_call(func, *args, **kwargs):
     while True:
         try:
@@ -40,16 +40,19 @@ async def safe_call(func, *args, **kwargs):
         except Exception:
             return None
 
-# ===== Save User =====
+# ================= SAVE USER =================
 async def save_user(user_id):
     if not users.find_one({"user_id": user_id}):
         users.insert_one({"user_id": user_id})
 
-# ===== Force Join =====
-async def check_join(client, user_id):
+# ================= FORCE JOIN =================
+async def check_join(user_id):
     for ch in CHANNELS:
+        ch = ch.strip()
+        if not ch:
+            continue
         try:
-            member = await client.get_chat_member(ch.strip(), user_id)
+            member = await app.get_chat_member(ch, user_id)
             if member.status in ["left", "kicked"]:
                 return False
         except:
@@ -59,16 +62,19 @@ async def check_join(client, user_id):
 def join_buttons():
     buttons = []
     for i, ch in enumerate(CHANNELS, start=1):
+        ch = ch.strip()
+        if not ch:
+            continue
         buttons.append([
             InlineKeyboardButton(
                 f"📢 Join Channel {i}",
-                url=f"https://t.me/{ch.strip().replace('@','')}"
+                url=f"https://t.me/{ch.replace('@','')}"
             )
         ])
     buttons.append([InlineKeyboardButton("🔄 Try Again", callback_data="retry")])
     return InlineKeyboardMarkup(buttons)
 
-# ===== START =====
+# ================= START =================
 @app.on_message(filters.command("start"))
 async def start(client, message):
 
@@ -80,11 +86,11 @@ async def start(client, message):
 
     key = message.command[1] if len(message.command) > 1 else None
 
-    # Verified cache
+    # Verify join
     if user_id in verified_users:
         joined = True
     else:
-        joined = await check_join(client, user_id)
+        joined = await check_join(user_id)
         if joined:
             verified_users.add(user_id)
 
@@ -105,11 +111,11 @@ async def start(client, message):
         await safe_call(message.reply, "❌ File not found.")
         return
 
-    file_list = data.get("files") or [data.get("file_id")]
+    file_list = data.get("files", [])
 
     sent_msgs = []
     for fid in file_list:
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.5)
         msg = await safe_call(
             client.send_cached_media,
             message.chat.id,
@@ -129,7 +135,7 @@ async def start(client, message):
             "expire_at": expire_time
         })
 
-# ===== RETRY =====
+# ================= RETRY =================
 @app.on_callback_query(filters.regex("retry"))
 async def retry(client, callback_query):
 
@@ -138,20 +144,13 @@ async def retry(client, callback_query):
 
     user_id = callback_query.from_user.id
 
-    if user_id in verified_users:
-        await safe_call(
-            callback_query.message.edit,
-            "✅ Verified. Click link again."
-        )
-        return
-
-    joined = await check_join(client, user_id)
+    joined = await check_join(user_id)
 
     if joined:
         verified_users.add(user_id)
         await safe_call(
             callback_query.message.edit,
-            "✅ Verified. Click link again."
+            "✅ Verified. Click the link again."
         )
     else:
         await safe_call(
@@ -160,7 +159,7 @@ async def retry(client, callback_query):
             show_alert=True
         )
 
-# ===== ADMIN UPLOAD =====
+# ================= ADMIN UPLOAD =================
 @app.on_message((filters.video | filters.photo) & filters.user(ADMIN))
 async def upload(client, message):
 
@@ -168,6 +167,7 @@ async def upload(client, message):
         return
 
     try:
+        # Bundle
         if message.media_group_id:
             group = await client.get_media_group(message.chat.id, message.id)
 
@@ -188,9 +188,10 @@ async def upload(client, message):
             await safe_call(message.reply, f"✅ Bundle saved.\n🔗 {link}")
             return
 
+        # Single
         fid = message.video.file_id if message.video else message.photo.file_id
-
         key = str(uuid.uuid4())[:8]
+
         files.insert_one({"key": key, "files": [fid]})
 
         link = f"https://t.me/{BOT_USERNAME}?start={key}"
@@ -199,7 +200,7 @@ async def upload(client, message):
     except:
         pass
 
-# ===== DELETE WORKER =====
+# ================= DELETE WORKER =================
 async def delete_worker():
     while True:
         now = int(time.time())
@@ -207,10 +208,7 @@ async def delete_worker():
 
         for doc in expired:
             try:
-                await app.delete_messages(
-                    doc["chat_id"],
-                    doc["message_id"]
-                )
+                await app.delete_messages(doc["chat_id"], doc["message_id"])
             except:
                 pass
 
@@ -218,7 +216,15 @@ async def delete_worker():
 
         await asyncio.sleep(30)
 
-# ===== MAIN =====
+# ================= ADMIN STATS =================
+@app.on_message(filters.command("stats") & filters.user(ADMIN))
+async def stats(client, message):
+    await safe_call(
+        message.reply,
+        f"📊 Stats\n\nFiles: {files.count_documents({})}\nUsers: {users.count_documents({})}"
+    )
+
+# ================= MAIN =================
 async def main():
     await app.start()
     asyncio.create_task(delete_worker())
