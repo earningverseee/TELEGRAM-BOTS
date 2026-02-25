@@ -52,9 +52,7 @@ async def delete_worker():
                     await app.delete_messages(doc["chat_id"], doc["message_id"])
                 except:
                     pass
-
                 deletions.delete_one({"_id": doc["_id"]})
-
         except:
             pass
 
@@ -100,7 +98,6 @@ async def start(client, message):
 
     global worker_started
 
-    # Start delete worker once
     if not worker_started:
         asyncio.create_task(delete_worker())
         worker_started = True
@@ -113,7 +110,7 @@ async def start(client, message):
 
     key = message.command[1] if len(message.command) > 1 else None
 
-    # Join verification
+    # STRICT JOIN CHECK
     joined = await check_join(user_id)
 
     if not joined:
@@ -137,7 +134,7 @@ async def start(client, message):
 
     sent_msgs = []
     for fid in file_list:
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.3)
         msg = await safe_call(
             client.send_cached_media,
             message.chat.id,
@@ -147,7 +144,7 @@ async def start(client, message):
         if msg:
             sent_msgs.append(msg)
 
-    # Persistent delete schedule
+    # Schedule persistent deletion
     expire_time = int(time.time()) + DELETE_TIME
 
     for m in sent_msgs:
@@ -169,14 +166,13 @@ async def retry(client, callback_query):
     joined = await check_join(user_id)
 
     if joined:
-        verified_users.add(user_id)
+        await callback_query.answer("✅ Verified!")
         await safe_call(
             callback_query.message.edit,
             "✅ Verified. Click the link again."
         )
     else:
-        await safe_call(
-            callback_query.answer,
+        await callback_query.answer(
             "❌ Join all channels first!",
             show_alert=True
         )
@@ -204,7 +200,11 @@ async def upload(client, message):
                     file_ids.append(m.photo.file_id)
 
             key = str(uuid.uuid4())[:8]
-            files.insert_one({"key": key, "files": file_ids})
+            files.insert_one({
+                "key": key,
+                "files": file_ids,
+                "clicks": 0
+            })
 
             link = f"https://t.me/{BOT_USERNAME}?start={key}"
             await safe_call(message.reply, f"✅ Bundle saved.\n🔗 {link}")
@@ -214,7 +214,11 @@ async def upload(client, message):
         fid = message.video.file_id if message.video else message.photo.file_id
         key = str(uuid.uuid4())[:8]
 
-        files.insert_one({"key": key, "files": [fid]})
+        files.insert_one({
+            "key": key,
+            "files": [fid],
+            "clicks": 0
+        })
 
         link = f"https://t.me/{BOT_USERNAME}?start={key}"
         await safe_call(message.reply, f"✅ Saved.\n🔗 {link}")
