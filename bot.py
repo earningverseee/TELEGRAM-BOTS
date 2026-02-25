@@ -26,7 +26,6 @@ deletions = db["deletions"]
 
 app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
 
-verified_users = set()
 worker_started = False
 
 # ================= SAFE CALL =================
