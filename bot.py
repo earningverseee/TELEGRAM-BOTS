@@ -114,12 +114,7 @@ async def start(client, message):
     key = message.command[1] if len(message.command) > 1 else None
 
     # Join verification
-    if user_id in verified_users:
-        joined = True
-    else:
-        joined = await check_join(user_id)
-        if joined:
-            verified_users.add(user_id)
+    joined = await check_join(user_id)
 
     if not joined:
         await safe_call(
