@@ -15,7 +15,9 @@ bot_token = os.environ.get("BOT_TOKEN")
 BOT_USERNAME = os.environ.get("BOT_USERNAME")
 ADMIN = int(os.environ.get("ADMIN"))
 DELETE_TIME = int(os.environ.get("DELETE_TIME", 900))
+
 CHANNELS = os.environ.get("CHANNELS", "").split(",")
+CHANNEL_LINKS = os.environ.get("CHANNEL_LINKS", "").split(",")
 
 # ================= DATABASE =================
 mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=50)
@@ -77,19 +79,39 @@ async def check_join(user_id):
             return False
     return True
 
+# ================= JOIN BUTTONS =================
 def join_buttons():
     buttons = []
+    link_index = 0
+
     for i, ch in enumerate(CHANNELS, start=1):
         ch = ch.strip()
         if not ch:
             continue
+
+        # Public channel
+        if ch.startswith("@"):
+            url = f"https://t.me/{ch.replace('@','')}"
+
+        # Private channel
+        else:
+            if link_index < len(CHANNEL_LINKS):
+                url = CHANNEL_LINKS[link_index].strip()
+                link_index += 1
+            else:
+                continue
+
         buttons.append([
             InlineKeyboardButton(
                 f"📢 Join Channel {i}",
-                url=f"https://t.me/{ch.replace('@','')}"
+                url=url
             )
         ])
-    buttons.append([InlineKeyboardButton("🔄 Try Again", callback_data="retry")])
+
+    buttons.append([
+        InlineKeyboardButton("🔄 Try Again", callback_data="retry")
+    ])
+
     return InlineKeyboardMarkup(buttons)
 
 # ================= START =================
@@ -110,7 +132,6 @@ async def start(client, message):
 
     key = message.command[1] if len(message.command) > 1 else None
 
-    # STRICT JOIN CHECK
     joined = await check_join(user_id)
 
     if not joined:
@@ -144,7 +165,6 @@ async def start(client, message):
         if msg:
             sent_msgs.append(msg)
 
-    # Schedule persistent deletion
     expire_time = int(time.time()) + DELETE_TIME
 
     for m in sent_msgs:
@@ -185,7 +205,6 @@ async def upload(client, message):
         return
 
     try:
-        # Bundle
         if message.media_group_id:
             group = await client.get_media_group(message.chat.id, message.id)
 
@@ -210,7 +229,6 @@ async def upload(client, message):
             await safe_call(message.reply, f"✅ Bundle saved.\n🔗 {link}")
             return
 
-        # Single
         fid = message.video.file_id if message.video else message.photo.file_id
         key = str(uuid.uuid4())[:8]
 
