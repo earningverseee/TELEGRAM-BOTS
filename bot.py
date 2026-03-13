@@ -17,7 +17,8 @@ ADMIN = int(os.environ.get("ADMIN"))
 DELETE_TIME = int(os.environ.get("DELETE_TIME", 900))
 
 CHANNELS = os.environ.get("CHANNELS", "").split(",")
-CHANNEL_LINKS = os.environ.get("CHANNEL_LINKS", "").split(",")
+CHANNEL_LINKS = os.environ.get("CHANNEL_LINKS")
+CHANNEL_LINKS = CHANNEL_LINKS.split(",") if CHANNEL_LINKS else []
 
 # ================= DATABASE =================
 mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=50)
