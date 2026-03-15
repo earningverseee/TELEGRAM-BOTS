@@ -59,7 +59,7 @@ async def delete_worker():
         except:
             pass
 
-        await asyncio.sleep(30)
+        await asyncio.sleep(.3)
 
 # ================= SAVE USER =================
 async def save_user(user_id):
