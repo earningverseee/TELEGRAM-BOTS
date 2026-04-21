@@ -22,7 +22,7 @@ CHANNEL_LINKS = os.environ.get("CHANNEL_LINKS")
 CHANNEL_LINKS = CHANNEL_LINKS.split(",") if CHANNEL_LINKS else []
 
 # ================= DATABASE =================
-mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=10)
+mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=30)
 
 db = mongo["telegram_bot"]
 files = db["files"]
