@@ -17,11 +17,14 @@ ADMIN = int(os.environ.get("ADMIN"))
 DELETE_TIME = int(os.environ.get("DELETE_TIME", 900))
 
 CHANNELS = os.environ.get("CHANNELS", "").split(",")
+
 CHANNEL_LINKS = os.environ.get("CHANNEL_LINKS")
 CHANNEL_LINKS = CHANNEL_LINKS.split(",") if CHANNEL_LINKS else []
 
 # ================= DATABASE =================
+# ⚠ reduced pool size for stability
 mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=50)
+
 db = mongo["telegram_bot"]
 files = db["files"]
 users = db["users"]
@@ -59,7 +62,8 @@ async def delete_worker():
         except:
             pass
 
-        await asyncio.sleep(.3)
+        # ⚠ fixed (was 0.3 → too aggressive)
+        await asyncio.sleep(30)
 
 # ================= SAVE USER =================
 async def save_user(user_id):
@@ -90,11 +94,8 @@ def join_buttons():
         if not ch:
             continue
 
-        # Public channel
         if ch.startswith("@"):
             url = f"https://t.me/{ch.replace('@','')}"
-
-        # Private channel
         else:
             if link_index < len(CHANNEL_LINKS):
                 url = CHANNEL_LINKS[link_index].strip()
@@ -184,19 +185,27 @@ async def retry(client, callback_query):
 
     user_id = callback_query.from_user.id
 
+    # ✅ FIX: answer immediately (prevents QUERY_ID_INVALID)
+    try:
+        await callback_query.answer()
+    except:
+        pass
+
     joined = await check_join(user_id)
 
     if joined:
-        await callback_query.answer("✅ Verified!")
         await safe_call(
             callback_query.message.edit,
             "✅ Verified. Click the link again."
         )
     else:
-        await callback_query.answer(
-            "❌ Join all channels first!",
-            show_alert=True
-        )
+        try:
+            await callback_query.answer(
+                "❌ Join all channels first!",
+                show_alert=True
+            )
+        except:
+            pass
 
 # ================= ADMIN UPLOAD =================
 @app.on_message((filters.video | filters.photo) & filters.user(ADMIN))
