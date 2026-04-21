@@ -68,25 +68,36 @@ async def save_user(user_id):
     if not users.find_one({"user_id": user_id}):
         users.insert_one({"user_id": user_id})
 
-# ================= FORCE JOIN (FIXED) =================
+# ================= FORCE JOIN (ULTIMATE FIX) =================
 async def check_join(user_id):
     for ch in CHANNELS:
         ch = ch.strip()
         if not ch:
             continue
 
-        try:
-            # 🔥 FIX: handle username & ID differently
-            if ch.startswith("@"):
-                chat = await app.get_chat(ch)
-                member = await app.get_chat_member(chat.id, user_id)
-            else:
-                member = await app.get_chat_member(int(ch), user_id)
+        success = False
 
-            if member.status in ["left", "kicked"]:
-                return False
+        for _ in range(3):  # retry 3 times
+            try:
+                if ch.startswith("@"):
+                    chat = await app.get_chat(ch)
+                    member = await app.get_chat_member(chat.id, user_id)
+                else:
+                    member = await app.get_chat_member(int(ch), user_id)
 
-        except:
+                if member.status not in ["left", "kicked"]:
+                    success = True
+                    break
+                else:
+                    return False
+
+            except FloodWait as e:
+                await asyncio.sleep(e.value)
+
+            except:
+                await asyncio.sleep(1)
+
+        if not success:
             return False
 
     return True
@@ -182,7 +193,7 @@ async def retry(client, callback_query):
 
     user_id = callback_query.from_user.id
 
-    # 🔥 FIX: answer immediately
+    # answer immediately
     try:
         await callback_query.answer()
     except:
