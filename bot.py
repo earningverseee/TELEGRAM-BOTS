@@ -22,8 +22,7 @@ CHANNEL_LINKS = os.environ.get("CHANNEL_LINKS")
 CHANNEL_LINKS = CHANNEL_LINKS.split(",") if CHANNEL_LINKS else []
 
 # ================= DATABASE =================
-# ⚠ reduced pool size for stability
-mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=50)
+mongo = MongoClient(os.environ.get("MONGO_URL"), maxPoolSize=10)
 
 db = mongo["telegram_bot"]
 files = db["files"]
@@ -62,7 +61,6 @@ async def delete_worker():
         except:
             pass
 
-        # ⚠ fixed (was 0.3 → too aggressive)
         await asyncio.sleep(30)
 
 # ================= SAVE USER =================
@@ -70,43 +68,42 @@ async def save_user(user_id):
     if not users.find_one({"user_id": user_id}):
         users.insert_one({"user_id": user_id})
 
-# ================= FORCE JOIN =================
+# ================= FORCE JOIN (FIXED) =================
 async def check_join(user_id):
     for ch in CHANNELS:
         ch = ch.strip()
         if not ch:
             continue
+
         try:
-            member = await app.get_chat_member(ch, user_id)
+            # 🔥 FIX: handle username & ID differently
+            if ch.startswith("@"):
+                chat = await app.get_chat(ch)
+                member = await app.get_chat_member(chat.id, user_id)
+            else:
+                member = await app.get_chat_member(int(ch), user_id)
+
             if member.status in ["left", "kicked"]:
                 return False
+
         except:
             return False
+
     return True
 
 # ================= JOIN BUTTONS =================
 def join_buttons():
     buttons = []
-    link_index = 0
 
-    for i, ch in enumerate(CHANNELS, start=1):
-        ch = ch.strip()
-        if not ch:
+    for i, link in enumerate(CHANNEL_LINKS, start=1):
+        link = link.strip()
+        if not link:
             continue
-
-        if ch.startswith("@"):
-            url = f"https://t.me/{ch.replace('@','')}"
-        else:
-            if link_index < len(CHANNEL_LINKS):
-                url = CHANNEL_LINKS[link_index].strip()
-                link_index += 1
-            else:
-                continue
 
         buttons.append([
             InlineKeyboardButton(
                 f"📢 Join Channel {i}",
-                url=url
+                url=link
             )
         ])
 
@@ -176,7 +173,7 @@ async def start(client, message):
             "expire_at": expire_time
         })
 
-# ================= RETRY =================
+# ================= RETRY (FIXED) =================
 @app.on_callback_query(filters.regex("retry"))
 async def retry(client, callback_query):
 
@@ -185,7 +182,7 @@ async def retry(client, callback_query):
 
     user_id = callback_query.from_user.id
 
-    # ✅ FIX: answer immediately (prevents QUERY_ID_INVALID)
+    # 🔥 FIX: answer immediately
     try:
         await callback_query.answer()
     except:
